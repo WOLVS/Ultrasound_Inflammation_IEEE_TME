@@ -1,11 +1,12 @@
 """
-This kernel is used to classify aishufan signals.
+This kernel is used to classify inflammation for micoultrasound scans.
 
 Author: Shufan Yang, shufany@gmail.com
 Date: 25/11/2019
 """
 
 import keras
+from keras import metrics
 from keras.models import load_model
 from keras.optimizers import Adam, Nadam
 from keras.callbacks import ModelCheckpoint, LearningRateScheduler
@@ -33,21 +34,18 @@ import click
 import time
 import json
 from scipy.stats import binom
-
-from sf_mltool.sf_mltool import Sf_mltool, sf_visualize_train
+from sf_mltool.sf_mltool import sf_visualize_train
 from keras.preprocessing.image import ImageDataGenerator
 from keras.models import Sequential
 from keras.layers import Dense, Dropout, Activation, Input, Flatten, Reshape
 from keras.layers import Conv2D, MaxPooling2D, UpSampling2D
 
 GENERAL_IMAGE_OFFSET = 5
-
+# three networks choose for training
+#simpleCNN is baseline
 MODEL_NAMES = {
     'NM': 'NASNetMobile.h5',
-    'NL': 'NASNetLarge.h5',
     'IR2': 'InceptionResNetV2.h5',
-    'XC': 'Xception.h5',
-    'D21': 'DenseNet201.h5',
     'IV3': 'InceptionV3.h5',
     'SC': 'SimpleCNN.h5',
 }
@@ -150,42 +148,8 @@ def create_ml_list(folder, ext='jpg', split=0.33):
     train_list, temp_list = train_test_split(flist, test_size=split)
     test_list, valid_list = train_test_split(temp_list, test_size=split)
 
-    #print(f'flist size: {len(flist)}, train size: {len(train_list)}, valid size: {len(valid_list)}, test size: {len(test_list)}')
     return train_list, valid_list, test_list
 
-
-def _draw_contours(fname, thdl=80, thdh=240):
-    """
-    draw contours of image
-    :param fname: image file name
-    :param thdl: contour detection low threshold
-    :param thdh: contour detection high threshold
-    :return: None
-    """
-    ifd = cv2.imread(str(fname))
-    cv2.imwrite(str(script_folder.joinpath('test.jpg')), ifd)
-
-    gray = cv2.cvtColor(ifd, cv2.COLOR_BGR2GRAY)
-    blur = cv2.GaussianBlur(gray, ksize=(5, 5), sigmaX=0)
-    blur[0:10, :] = 0
-    blur[(ifd.shape[0]-10):ifd.shape[0], :] = 0
-
-    _, binary = cv2.threshold(blur, thdl, thdh, cv2.THRESH_BINARY)
-    major = cv2.__version__.split('.')[0]
-    if major == '3':
-        _, contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-    else:
-        contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-    cv2.drawContours(image=ifd,
-                     contours=contours,
-                     contourIdx=-1,
-                     color=(0, 200, 25),
-                     thickness=5)
-
-    cv2.imshow('Contours', ifd)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
 
 
 def extract_ultrasound_image(folder, cl, fname):
@@ -229,75 +193,6 @@ def extract_ultrasound_image(folder, cl, fname):
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     # for debug only
-    if False:
-        cv2.drawContours(image=npimage,
-                         contours=contours,
-                         contourIdx=-1,
-                         color=(0, 200, 25),
-                         thickness=5)
-        cv2.imshow('test', npimage)
-        cv2.waitKey(0)
-
-    tl_x = ws
-    tl_y = hs
-    br_x = 0
-    br_y = 0
-    for i in contours:
-        (x, y, w, h) = cv2.boundingRect(i)
-        s = x + w
-        t = y + h
-        tl_x = x if (tl_x > x) else tl_x
-        tl_y = y if (tl_y > y) else tl_y
-        br_x = s if (br_x < s) else br_x
-        br_y = t if (br_y < t) else br_y
-
-    # Fix width
-    fixed_width = 400
-    brw = br_x - tl_x
-    brh = br_y - tl_y
-    if (brh > fixed_width):
-        # Cropping height is too big, change it smaller.
-        offset = (brh - fixed_width)/2
-        tl_y = tl_y + offset
-        br_y = br_y - offset
-    else:
-        #TODO: tl_y < 0 is not checked
-        offset = (fixed_width - brh)/2
-        tl_y = tl_y - offset
-        br_y = br_y + offset
-
-    # Crop it to designated size
-    num = int((br_x - tl_x)/fixed_width)
-    for i in range(num):
-        box = [tl_x + i*fixed_width, tl_y, tl_x + (i + 1)*fixed_width, br_y]
-        if box[2] > br_x:
-            box[2] = br_x
-            box[0] = box[2] - fixed_width
-
-        ofd = ifd[int(box[1]):int(box[3]), int(box[0]):int(box[2]), :]
-        ofdr = ofd[:, :, 0]
-        ofdr[(ofdr < 150) & (ofdr > 130)] = 0
-        # ofd[:, :, 0] = 0
-        ofd[:, :, 0] = ofdr
-
-        # Save it
-        idx = 1
-        ofname = folder.joinpath(f'{cl}_{fname.stem}_{idx}.jpg')
-        while (ofname.is_file()):
-            idx = idx + 1
-            ofname = folder.joinpath(f'{cl}_{fname.stem}_{idx}.jpg')
-
-        cvofd = cv2.resize(ofd, (extracted_image_wh, extracted_image_wh), interpolation=cv2.INTER_NEAREST)
-        images.append(cvofd)
-
-        cv2.imwrite(str(ofname), cvofd)
-
-    np_images_shape = (len(images), extracted_image_wh, extracted_image_wh, 3)
-    np_images = np.zeros(np_images_shape, dtype=np.uint8)
-    for i, image in enumerate(images):
-        np_images[i] = image
-
-    return np_images
 
 
 def extract_images(dst_folder, src_folder, re, cl, extracted_image_wh=128):
@@ -447,63 +342,6 @@ def simple_cnn(input_shape=None, classes=0):
     return model
 
 
-def unet_cnn(input_shape=None, classes=0):
-    model = Sequential()
-
-    model.add(Conv2D(16, (3, 3), padding='same', input_shape=input_shape))
-    model.add(Activation('relu'))
-    model.add(Conv2D(16, (3, 3)))
-    model.add(Activation('relu'))
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.25))
-
-    model.add(Conv2D(8, (3, 3), padding='same'))
-    model.add(Activation('relu'))
-    model.add(Conv2D(8, (3, 3)))
-    model.add(Activation('relu'))
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.25))
-
-    model.add(Conv2D(8, (3, 3), padding='same'))
-    model.add(Activation('relu'))
-    model.add(Conv2D(8, (3, 3)))
-    model.add(Activation('relu'))
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-    model.add(Dropout(0.25))
-
-    model.add(Flatten())
-    model.add(Reshape((14, 14, 8)))
-
-    model.add(Conv2D(8, (3, 3), padding='same'))
-    model.add(Activation('relu'))
-    model.add(Conv2D(8, (3, 3)))
-    model.add(Activation('relu'))
-    model.add(UpSampling2D((2, 2)))
-    model.add(Dropout(0.25))
-
-    model.add(Conv2D(8, (3, 3), padding='same'))
-    model.add(Activation('relu'))
-    model.add(Conv2D(8, (3, 3)))
-    model.add(Activation('relu'))
-    model.add(UpSampling2D((2, 2)))
-    model.add(Dropout(0.25))
-
-    model.add(Conv2D(16, (3, 3), padding='same'))
-    model.add(Activation('relu'))
-    model.add(Conv2D(16, (3, 3)))
-    model.add(Activation('relu'))
-    model.add(UpSampling2D((2, 2)))
-    model.add(Dropout(0.25))
-
-    model.add(Flatten())
-    model.add(Dense(512))
-    model.add(Activation('relu'))
-    model.add(Dropout(0.5))
-    model.add(Dense(classes))
-    model.add(Activation('softmax'))
-
-    return model
-
 
 def aishufan_train(folder, batch_size, epoch_size, model_name):
     """
@@ -535,14 +373,7 @@ def aishufan_train(folder, batch_size, epoch_size, model_name):
                              input_shape=image_shape,
                              pooling='max',
                              classes=2)
-    elif 'NL' in model_name:
-        model_name = 'NL'
-        model = NASNetLarge(include_top=True,
-                            weights=None,
-                            input_tensor=None,
-                            input_shape=image_shape,
-                            pooling='max',
-                            classes=2)
+
     elif 'XC' in model_name:
         model_name = 'XC'
         model = Xception(include_top=True,
@@ -567,10 +398,7 @@ def aishufan_train(folder, batch_size, epoch_size, model_name):
                             input_shape=image_shape,
                             pooling='max',
                             classes=2)
-    elif 'SC' in model_name:
-        model_name = 'SC'
-        model = unet_cnn(input_shape=image_shape,
-                           classes=2)
+
     else:
         model_name = 'IR2'
         model = InceptionResNetV2(include_top=True,
@@ -749,7 +577,7 @@ def autoencoder_train(folder, batch_size, epoch_size, model_name):
                   metrics=['accuracy'])
     model.summary()
 
-    # Image generator does data augmentation:
+    # Image generator does modest data augmentation:
     datagen = data_generator()
 
     train_gen = datagen.flow_from_dataframe(
@@ -1001,7 +829,7 @@ def double_check(fname, model_first, data_generator):
     gen = data_generator.flow(images, shuffle=False)
     probabilities = model_first.predict_generator(generator=gen, steps=len(gen), verbose=1)
 
-    # TODO: class_index might returns a low possibility class.
+    #: class_index might returns a low possibility class.
     pred = np.argmax(probabilities, axis=-1)
     class_index = max(pred)
 
@@ -1012,43 +840,18 @@ def double_check(fname, model_first, data_generator):
             des = f'{class_list[idx]}: {col}; '
             rdes1 += des
 
+    #confusion matrix
+    cm = confusion_matrix(class_list, class_index)
+    print(f'Confusion matrix: {cm}')
+
+
     # Save first model data for later check.
     ts = time.time()
     for i in range(images.shape[0]):
         ofname = first_dir.joinpath(f'{ts}_{class_list[pred[i]]}_{i}.jpg')
         cv2.imwrite(str(ofname), images[i])
 
-    # Not used any more
-    '''
-    rdes2 = 'second inference: '
-    if count_first < 1 and False:
-        # Predict again with second model
-        gen = data_generator.flow(images, shuffle=False)
-        probabilities = model_second.predict_generator(generator=gen, steps=len(gen), verbose=0)
-        pred = np.argmax(probabilities, axis=-1)
-        count_second = np.count_nonzero(pred)
 
-        for row in probabilities:
-            for idx, col in enumerate(row):
-                des = f'{idx}: {col}; '
-                rdes2 += des
-
-        # for manual check
-        for i in range(images.shape[0]):
-            ofname = second_dir.joinpath(f'{ts}_FLM_{i}.jpg') if pred[i] == 1 else second_dir.joinpath(
-                f'{ts}_NON_{i}.jpg')
-            cv2.imwrite(str(ofname), images[i])
-
-        model_name = system_config['second_model']
-        threshold_second = 1
-        print(f'Second detected regions: {count_second}; decision threshold: {threshold_second}')
-        if count_second < threshold_second:
-            result = False
-        else:
-            result = True
-    else:
-        result = True
-    '''
 
     return (class_list[class_index], rdes1)
 
