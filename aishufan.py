@@ -52,7 +52,7 @@ MODEL_NAMES = {
 
 system_config = {
     "Author": "Shufan Yang",
-    "Email": "shufan.yang@glasgow.ac.uk",
+    "Email": "shufany@gmail.com",
     "Version": "1.0.0",
     "first_model": "NM",
     "second_model": "IV3",
@@ -201,8 +201,8 @@ def extract_images(dst_folder, src_folder, re, cl, extracted_image_wh=128):
 
     Example:
 
-    src = Path('C:/Users/LiShoujie/Desktop/ml/ml/ImgTree/0614-1')
-    dst = Path('C:/Users/LiShoujie/Desktop/ml/ml/ImgTree/test')
+    src = Path('C:/Users/Desktop/ml/ml/ImgTree/0614-1')
+    dst = Path('C:/Users/Desktop/ml/ml/ImgTree/test')
 
     extract_images(dst, src)
 
@@ -805,108 +805,7 @@ def decision_threshold(overall=0.99, accuracy=0.95, samples=1000):
         return int(k)
 
 
-def double_check(fname, model_first, data_generator):
-    """
-    Double check whether the input image is FLM or not. The check, or infer is
-    done with 2 models.
-    :param fname: image file name
-    :param model_first: The first neural network model
-    :param data_generator: data generator for neural network model
-    :return: image inference label and its description
-    """
-    # The following code is for storing files to check manually
-    check_dir = script_folder.joinpath('check')
-    first_dir = check_dir.joinpath('first')
-    second_dir = check_dir.joinpath('second')
 
-    # create debug folder
-    debug_folder = script_folder.joinpath('debug')
-    shutil.rmtree(str(debug_folder), ignore_errors=True)
-    debug_folder.mkdir(exist_ok=True)
-
-    # Predict with first model
-    images = extract_ultrasound_image(debug_folder, 'debug', fname)
-    gen = data_generator.flow(images, shuffle=False)
-    probabilities = model_first.predict_generator(generator=gen, steps=len(gen), verbose=1)
-
-    #: class_index might returns a low possibility class.
-    pred = np.argmax(probabilities, axis=-1)
-    class_index = max(pred)
-
-    class_list = list(system_config['class_indices'].keys())
-    rdes1 = 'first inference: '
-    for row in probabilities:
-        for idx, col in enumerate(row):
-            des = f'{class_list[idx]}: {col}; '
-            rdes1 += des
-
-    #confusion matrix
-    cm = confusion_matrix(class_list, class_index)
-    print(f'Confusion matrix: {cm}')
-
-
-    # Save first model data for later check.
-    ts = time.time()
-    for i in range(images.shape[0]):
-        ofname = first_dir.joinpath(f'{ts}_{class_list[pred[i]]}_{i}.jpg')
-        cv2.imwrite(str(ofname), images[i])
-
-
-
-    return (class_list[class_index], rdes1)
-
-
-def infer_batch(src_folder, re, result_file, debug=False):
-    """
-    Infer the class of an iPad from captured image. For one image, 2 different
-    models are used to predict its class. This ensures prediction accuracy.
-
-    :param src_folder: source image folder.
-    :param re: image file name regular expression
-    :param result_file: infer result file
-    :param debug: Debug flag
-    :return: None
-    """
-    check_dir = script_folder.joinpath('check')
-    if not check_dir.is_dir():
-        check_dir.mkdir(exist_ok=True)
-
-    first_dir = check_dir.joinpath('first')
-    if not first_dir.is_dir():
-        first_dir.mkdir(exist_ok=True)
-
-    # Load model, probably find a latest file in saved model folder
-    model_indexes = ('NM', 'NM')
-    # first prediction model
-    model_fname = f'models/{MODEL_NAMES[model_indexes[0]]}'
-    model_fname = script_folder.joinpath(model_fname)
-    model_first = load_model(str(model_fname), compile=False)
-
-    # Image generator does data augmentation
-    datagen = data_generator()
-
-    # Remove previous infer result
-    if result_file.is_file():
-        result_file.unlink()
-
-    # Get all files
-    files = list(Path(src_folder).glob(re))
-    total = len(files)
-
-    # infer one by one
-    fname = script_folder.joinpath('result.csv')
-    with open(str(fname), 'w') as ofd:
-        with tqdm(total=total) as pbar:
-            for i in files:
-                # Wait for signal from external device or a socket server?
-                try:
-                    result = double_check(i, model_first, datagen)
-                    ofd.write(f'{result[0]}, "{result[1]}", {str(i)}\r\n')
-                except:
-                    pass
-
-                pbar.set_description(str(i))
-                pbar.update(1)
 
 
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
